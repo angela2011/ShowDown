@@ -1,0 +1,5 @@
+subscription_id = "ca0fb43e-1ec2-4425-88eb-2e4839fd0d6d"
+location        = "eastasia"   
+ghcr_owner      = "angela_2011"            
+image_tag       = "latest"                           # switch to a commit SHA for real deploys
+# slack_webhook_url = "https://hooks.slack.com/services/..."
