@@ -9,7 +9,7 @@ locals {
 
   # asyncpg takes ssl=require in the query string; Azure Postgres enforces TLS.
   database_url = "postgresql+asyncpg://asmadmin:${random_password.pg.result}@${azurerm_postgresql_flexible_server.pg.fqdn}:5432/asm?ssl=require"
-  redis_url    = "redis://${azurerm_container_app.redis.name}:6379/0"
+  redis_url    = "redis://localhost:6379/0" # Redis runs as a sidecar container in the core app
 }
 
 resource "random_string" "suffix" {
@@ -49,6 +49,21 @@ resource "azurerm_container_app_environment" "env" {
   location                   = azurerm_resource_group.rg.location
   resource_group_name        = azurerm_resource_group.rg.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.logs.id
+
+  # A workload-profiles environment (the standard type) with only the
+  # pay-per-use Consumption profile. Do NOT set min/max counts on it.
+  # Our first apply (no workload_profile block) produced an "express"
+  # environment, which is HTTP-only with no TCP and no service discovery
+  # between apps. Declaring the profile gives a standard environment.
+  workload_profile {
+    name                  = "Consumption"
+    workload_profile_type = "Consumption"
+  }
+
+  # The provider shows a perpetual diff on this block (azurerm issue #31840)
+  lifecycle {
+    ignore_changes = [workload_profile]
+  }
 }
 
 # ---------- PostgreSQL (the one non-trivial fixed cost) ----------
@@ -89,44 +104,18 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
   end_ip_address   = "0.0.0.0"
 }
 
-# ---------- Redis as a small internal container (managed Azure Cache for Redis is closed to new customers) ----------
-resource "azurerm_container_app" "redis" {
-  name                         = "${local.prefix}-redis"
+# ---------- Core app: API + worker + Redis as three containers in ONE app ----------
+# Why one app: exposing Redis to other apps needs TCP ingress, which isn't
+# available without a custom VNet. Containers in the same app share localhost,
+# so the API and worker reach Redis at localhost:6379 with no ingress at all.
+# Trade-off: they scale together, and the queue is in memory (a restart drops
+# queued jobs; the scan rows in Postgres stay as "queued").
+resource "azurerm_container_app" "core" {
+  name                         = "${local.prefix}-core"
   container_app_environment_id = azurerm_container_app_environment.env.id
   resource_group_name          = azurerm_resource_group.rg.name
   revision_mode                = "Single"
-
-  template {
-    min_replicas = 1
-    max_replicas = 1
-
-    container {
-      name   = "redis"
-      image  = "redis:7-alpine"
-      cpu    = 0.25
-      memory = "0.5Gi"
-    }
-  }
-
-  ingress {
-    external_enabled = false
-    target_port      = 6379
-    exposed_port     = 6379
-    transport        = "tcp"
-
-    traffic_weight {
-      latest_revision = true
-      percentage      = 100
-    }
-  }
-}
-
-# ---------- API (internal only; reachable through the Nginx gateway) ----------
-resource "azurerm_container_app" "api" {
-  name                         = "${local.prefix}-api"
-  container_app_environment_id = azurerm_container_app_environment.env.id
-  resource_group_name          = azurerm_resource_group.rg.name
-  revision_mode                = "Single"
+  workload_profile_name        = "Consumption"
 
   secret {
     name  = "database-url"
@@ -138,9 +127,27 @@ resource "azurerm_container_app" "api" {
     value = random_password.api_secret.result
   }
 
+  dynamic "secret" {
+    for_each = var.slack_webhook_url == "" ? [] : [1]
+    content {
+      name  = "slack-webhook"
+      value = var.slack_webhook_url
+    }
+  }
+
   template {
-    min_replicas = 0
-    max_replicas = 2
+    # Always on (the worker must keep polling) and exactly one replica, so the
+    # in-memory Redis queue is never split across replicas.
+    min_replicas = 1
+    max_replicas = 1
+
+    # total 1.0 vCPU / 2.0 Gi is a valid Container Apps size
+    container {
+      name   = "redis"
+      image  = "redis:7-alpine"
+      cpu    = 0.25
+      memory = "0.5Gi"
+    }
 
     container {
       name   = "api"
@@ -165,53 +172,13 @@ resource "azurerm_container_app" "api" {
         value = "scan_jobs"
       }
     }
-  }
-
-  ingress {
-    external_enabled = false
-    target_port      = 8000
-    # Nginx talks to the API over plain HTTP inside the environment; without
-    # this the ingress answers http:// with a redirect to https://.
-    allow_insecure_connections = true
-
-    traffic_weight {
-      latest_revision = true
-      percentage      = 100
-    }
-  }
-
-  depends_on = [azurerm_postgresql_flexible_server_database.db, azurerm_postgresql_flexible_server_firewall_rule.azure_services]
-}
-
-# ---------- Worker (no ingress; pulls jobs from Redis) ----------
-resource "azurerm_container_app" "worker" {
-  name                         = "${local.prefix}-worker"
-  container_app_environment_id = azurerm_container_app_environment.env.id
-  resource_group_name          = azurerm_resource_group.rg.name
-  revision_mode                = "Single"
-
-  secret {
-    name  = "database-url"
-    value = local.database_url
-  }
-
-  dynamic "secret" {
-    for_each = var.slack_webhook_url == "" ? [] : [1]
-    content {
-      name  = "slack-webhook"
-      value = var.slack_webhook_url
-    }
-  }
-
-  template {
-    min_replicas = 1
-    max_replicas = 1
 
     container {
       name   = "worker"
       image  = local.images.worker
       cpu    = 0.5
       memory = "1Gi"
+      # worker has no ports; it just polls Redis and writes to Postgres
 
       env {
         name        = "DATABASE_URL"
@@ -236,7 +203,24 @@ resource "azurerm_container_app" "worker" {
     }
   }
 
-  depends_on = [azurerm_postgresql_flexible_server_database.db, azurerm_postgresql_flexible_server_firewall_rule.azure_services]
+  # Ingress targets the API container (the only one that listens)
+  ingress {
+    external_enabled = false
+    target_port      = 8000
+    # Nginx talks to the API over plain HTTP inside the environment; without
+    # this the ingress answers http:// with a redirect to https://.
+    allow_insecure_connections = true
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+
+  depends_on = [
+    azurerm_postgresql_flexible_server_database.db,
+    azurerm_postgresql_flexible_server_firewall_rule.azure_services,
+  ]
 }
 
 # ---------- Nginx gateway (the only public entry point) ----------
@@ -245,6 +229,7 @@ resource "azurerm_container_app" "gateway" {
   container_app_environment_id = azurerm_container_app_environment.env.id
   resource_group_name          = azurerm_resource_group.rg.name
   revision_mode                = "Single"
+  workload_profile_name        = "Consumption"
 
   template {
     min_replicas = 0
@@ -258,7 +243,7 @@ resource "azurerm_container_app" "gateway" {
 
       env {
         name  = "API_HOST"
-        value = azurerm_container_app.api.ingress[0].fqdn
+        value = azurerm_container_app.core.ingress[0].fqdn
       }
       env {
         name  = "API_PORT"

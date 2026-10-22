@@ -7,3 +7,13 @@ venv/
 .DS_Store
 pgdata/
 *.log
+
+# Terraform local files and state
+**/.terraform/
+*.tfstate
+*.tfstate.*
+
+# Local environment secrets
+.env
+.env.*
+!.env.example
