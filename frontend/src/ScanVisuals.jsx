@@ -23,18 +23,18 @@ export function SurfaceRadar({assets, onSelect, demo}) {
     <div className="radar-layout">
       <div className={`radar-stage ${paused ? "paused" : ""}`} role="group" aria-label="Asset radar. Select a host to inspect its findings.">
         <div className="radar-grid" aria-hidden="true"><span/><span/><span/><span/><i className="radar-cross horizontal"/><i className="radar-cross vertical"/><div className="radar-sweep"/><div className="radar-core"/></div>
-        {assets.map(asset => {const level = assetSeverity(asset);return <button key={asset.id} className={`radar-host ${level}`} style={position(asset,level)} aria-label={`Inspect radar host ${asset.host}, ${level === "clean" ? "no observed flags" : level + " severity"}`} title={`${asset.host} · ${level === "clean" ? "No observed flags" : level}`} onClick={() => onSelect(asset)}><span/></button>})}
+        {assets.map(asset => {const level = assetSeverity(asset);return <button key={`${asset.id}:${asset.scan}`} className={`radar-host ${level} ${asset.isNew ? "asset-new" : ""}`} style={position(asset,level)} aria-label={`Inspect radar host ${asset.host}, ${level === "clean" ? "no observed flags" : level + " severity"}`} title={`${asset.host} · ${level === "clean" ? "No observed flags" : level}`} onClick={() => onSelect(asset)}><span/></button>})}
         {!assets.length && <div className="radar-empty">No discovered hosts<br/><small>Completed scans populate the radar.</small></div>}
       </div>
       <div className="radar-key"><h3>Your perimeter, in focus.</h3><p>Select a host to inspect it. Hosts closer to the center have higher-severity observations.</p><div className="radar-legend">{levels.map(level => <div key={level}><i className={`severity-dot ${level}`}/><span>{level === "clean" ? "No flags" : level}</span><strong>{counts[level]}</strong></div>)}</div><small>The sweep is a visual animation, not scan progress.</small></div>
     </div>
   </Panel>;
 }
-export function ScanControls({scans, demo, connected, busy, error, onScan, onRefresh}) {
+export function ScanControls({scans, demo, connected, busy, error, cooldown=0, onScan, onRefresh}) {
   const running = scans.filter(s => s.status === "running").length;
   const queued = scans.filter(s => s.status === "queued").length;
   const latest = [...scans].sort((a,b) => utcDate(b.created_at) - utcDate(a.created_at))[0];
-  const active = !demo && connected && !error && (running || queued);
+  const active = !demo && connected && !error && running > 0;
   const status = demo ? "Demo snapshot" : error ? "Scan status unavailable" : !connected ? busy ? "Connecting…" : "API offline" : running ? `${running} scan${running === 1 ? "" : "s"} running${queued ? ` · ${queued} queued` : ""}` : queued ? `${queued} scan${queued === 1 ? "" : "s"} queued` : latest?.status === "failed" ? "Latest scan failed" : "No active scans";
-  return <div className="scan-controls"><div className={`scan-status ${active ? "is-active" : ""}`} role="status" aria-live="polite"><Radio size={16}/><div><strong>{status}</strong><small>{latest ? `Last started ${dateLabel(latest.created_at)}` : "Selected domain scope"}{!demo && connected ? " · 30s refresh" : ""}</small></div></div><div className="scan-actions"><button className="secondary scan-refresh" onClick={onRefresh} disabled={busy || demo} aria-label="Refresh scan status"><RefreshCw size={15} className={busy ? "spin" : ""}/>Refresh</button><button className="primary scan-primary" onClick={onScan}><Play size={16}/>New scan</button></div></div>;
+  return <div className="scan-controls"><div className={`scan-status ${active ? "is-active" : ""}`} role="status" aria-live="polite"><Radio size={16}/><div><strong>{status}</strong><small>{latest ? `Last started ${dateLabel(latest.created_at)}` : "Selected domain scope"}{!demo && connected ? " · 30s refresh" : ""}</small></div></div><div className="scan-actions"><button className="secondary scan-refresh" onClick={onRefresh} disabled={busy || demo || cooldown>0} aria-label="Refresh scan status"><RefreshCw size={15} className={busy ? "spin" : ""}/>{cooldown>0 && !demo ? `Wait ${cooldown}s` : "Refresh"}</button><button className="primary scan-primary" onClick={onScan}><Play size={16}/>New scan</button></div></div>;
 }

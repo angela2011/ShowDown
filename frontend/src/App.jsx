@@ -19,7 +19,8 @@ import {
 } from "lucide-react";
 import { api } from "./api";
 import { SurfaceRadar, ScanControls } from "./ScanVisuals";
-import { derive, demoData } from "./data";
+import { derive, dateLabel } from "./data";
+import { useMonitor } from "./useMonitor";
 import {
   Badge,
   Panel,
@@ -40,78 +41,33 @@ const navigation = [
   ["Settings", Settings],
 ];
 export default function App() {
-  const [page, setPage] = useState("Overview"),
-    [mobile, setMobile] = useState(false),
-    [demo, setDemo] = useState(false),
-    [data, setData] = useState({ domains: [], scans: [] }),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [scope, setScope] = useState("all"),
-    [search, setSearch] = useState(""),
-    [severity, setSeverity] = useState("all"),
-    [modal, setModal] = useState(null),
-    [notice, setNotice] = useState(""),
-    [connected, setConnected] = useState(false);
-  const generation = useRef(0),
-    inflight = useRef(false);
-  const load = useCallback(async () => {
-    if (demo || inflight.current) return;
-    inflight.current = true;
-    const epoch = generation.current;
-    setBusy(true);
-    try {
-      const domains = await api.domains();
-      if (!Array.isArray(domains))
-        throw new Error("Unexpected domains response.");
-      const results = await Promise.allSettled(
-        domains.map((d) => api.scans(d.id)),
-      );
-      if (epoch !== generation.current) return;
-      const failed = results.filter((r) => r.status === "rejected");
-      setData({
-        domains,
-        scans: results.flatMap((r) =>
-          r.status === "fulfilled" && Array.isArray(r.value) ? r.value : [],
-        ),
-      });
-      setConnected(true);
-      setError(
-        failed.length
-          ? `${failed.length} domain scan history request(s) failed. ${failed[0].reason.message}`
-          : "",
-      );
-    } catch (e) {
-      if (epoch === generation.current) {
-        setError(e.message);
-        setConnected(false);
-        setData({ domains: [], scans: [] });
-      }
-    } finally {
-      inflight.current = false;
-      if (epoch === generation.current) setBusy(false);
-    }
-  }, [demo]);
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 30000);
-    return () => clearInterval(timer);
-  }, [load]);
-  function switchMode(value) {
-    generation.current++;
-    setDemo(value);
-    setData(value ? demoData() : { domains: [], scans: [] });
-    setScope("all");
-    setError("");
-    setBusy(false);
-    setConnected(false);
-    setModal(null);
-  }
+  const [page,setPage]=useState('Overview'),[mobile,setMobile]=useState(false),[scope,setScope]=useState('all'),[search,setSearch]=useState(''),[severity,setSeverity]=useState('all'),[modal,setModal]=useState(null),[notice,setNotice]=useState(''),[mutating,setMutating]=useState(false);
+  const monitor=useMonitor();
+  const {demo,data,error,setError,busy:loading,connected,lastSync,cooldown,load}=monitor;
+  const busy=loading||mutating;
+  const mutationLock=useRef(false),menuButton=useRef(null);
+  const refresh=()=>load(true);
+  function switchMode(value){setScope('all');setModal(null);monitor.switchMode(value);}
+  useEffect(()=>{if(!mobile)return;const close=e=>{if(e.key==='Escape'){setMobile(false);menuButton.current?.focus();}};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close);},[mobile]);
   const domains =
     scope === "all" ? data.domains : data.domains.filter((d) => d.id === scope);
   const scans = data.scans.filter((s) =>
     domains.some((d) => d.id === s.domain_id),
   );
+  const failedScans=scans.filter(s=>s.status==="failed");
   const derived = useMemo(() => derive(domains, scans), [data, scope]);
+  // Animate a new completed snapshot without remounting controls or losing focus.
+  const snapshotRef = useRef(null);
+  const snapshotKey = `${demo}:${scope}:` + [...new Set(scans.filter(s => s.status === "completed").map(s => `${s.domain_id}:${s.id}`))].sort().join("|");
+  useEffect(() => {
+    const node = snapshotRef.current;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (!node || motion.matches) return;
+    const animation = node.animate([{opacity:.65}, {opacity:1}], {duration:280, easing:"ease-out"});
+    const stop = () => { if(motion.matches) animation.cancel(); };
+    motion.addEventListener("change", stop);
+    return () => { animation.cancel(); motion.removeEventListener("change", stop); };
+  }, [snapshotKey]);
   const assets = derived.assets.filter((a) =>
     a.host.toLowerCase().includes(search.toLowerCase()),
   );
@@ -126,18 +82,11 @@ export default function App() {
     setMobile(false);
   }
   async function mutate(action) {
-    setBusy(true);
-    setError("");
-    try {
-      await action();
-      setModal(null);
-      setNotice("Saved successfully.");
-      await load();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
+    if(mutationLock.current)return;
+    mutationLock.current=true;setMutating(true);setError('');
+    try{await action();setModal(null);setNotice('Saved successfully.');await monitor.afterMutation();}
+    catch(e){setError(e.message);}
+    finally{mutationLock.current=false;setMutating(false);}
   }
   function exportData() {
     const blob = new Blob(
@@ -146,6 +95,7 @@ export default function App() {
           {
             source: demo ? "demo" : "backend",
             exported_at: new Date().toISOString(),
+            partial_response: Boolean(error),
             domains,
             scans,
             assets: derived.assets,
@@ -172,7 +122,7 @@ export default function App() {
   );
   return (
     <div className="app">
-      <aside className={mobile ? "sidebar open" : "sidebar"}>
+      <aside id="workspace-sidebar" aria-label="Workspace navigation" className={mobile ? "sidebar open" : "sidebar"}>
         <a
           className="brand"
           href="#"
@@ -236,6 +186,9 @@ export default function App() {
           <button
             className="icon-button mobile-menu"
             aria-label="Toggle navigation"
+            aria-expanded={mobile}
+            aria-controls="workspace-sidebar"
+            ref={menuButton}
             onClick={() => setMobile(!mobile)}
           >
             <Menu size={21} />
@@ -251,8 +204,8 @@ export default function App() {
             <button
               className="icon-button"
               aria-label="Refresh data"
-              disabled={busy || demo}
-              onClick={load}
+              disabled={busy || demo || cooldown > 0}
+              onClick={refresh}
             >
               <RefreshCw size={16} className={busy ? "spin" : ""} />
             </button>
@@ -276,7 +229,7 @@ export default function App() {
                           : "Your connection and data preferences."}
               </p>
             </div>
-            <ScanControls scans={scans} demo={demo} connected={connected} busy={busy} error={error} onScan={() => setModal({type: "scan"})} onRefresh={load} />
+            <ScanControls scans={scans} demo={demo} connected={connected} busy={busy} error={error} cooldown={cooldown} onScan={() => setModal({type: "scan"})} onRefresh={refresh} />
           </header>
           {demo && (
             <div className="demo-strip">
@@ -297,7 +250,7 @@ export default function App() {
                 <strong>Backend needs attention</strong>
                 <p>{error}</p>
               </div>
-              <button className="text-button" onClick={load} disabled={busy}>
+              <button className="text-button" onClick={refresh} disabled={busy || cooldown > 0}>
                 Retry
               </button>
             </div>
@@ -337,8 +290,10 @@ export default function App() {
               </button>
             </div>
           )}
+          <div className="sync-state" role="status">{busy ? 'Refreshing data…' : lastSync ? `Last synchronized ${dateLabel(lastSync)}` : demo ? 'Demonstration data only' : 'Waiting for API data'}{cooldown>0 && !demo && ` · Refresh available in ${cooldown}s`}</div>
+          {failedScans.length>0 && <div className="alert" role="status"><TriangleAlert size={18}/><div><strong>{failedScans.length} failed scan{failedScans.length===1?'':'s'} in scope</strong><p>{failedScans.slice(0,3).map(scan=>`${dateLabel(scan.created_at)}: ${scan.diff?.error||'The worker reported a failure. Inspect scan details.'}`).join(' · ')}</p><button className="text-button" onClick={()=>navigate('Scan history')}>View scan history</button></div></div>}
           {page === "Overview" && (
-            <>
+            <div ref={snapshotRef} className="snapshot-view">
               <Metrics
                 assets={derived.assets.length}
                 ports={derived.ports}
@@ -386,7 +341,7 @@ export default function App() {
                   onSelect={(s) => setModal({ type: "detail", value: s })}
                 />
               </Panel>
-            </>
+            </div>
           )}
           {["Assets", "Findings"].includes(page) && (
             <Panel
@@ -636,7 +591,7 @@ export default function App() {
                   pattern="[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+"
                 />
               </label>
-              <button className="primary" disabled={busy}>
+              <button className="primary" disabled={busy || cooldown > 0}>
                 Register domain
               </button>
             </form>

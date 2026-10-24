@@ -1,18 +1,16 @@
 export const severityOrder = ["critical", "high", "medium", "low"];
 export function utcDate(value) {
-  return new Date(
-    value && !/(Z|[+-]\d\d:\d\d)$/.test(value) ? value + "Z" : value,
-  );
+  if (typeof value !== 'string' || !value.trim()) return new Date(NaN);
+  const text=value.trim();
+  const match=/^(\d{4})-(\d{2})-(\d{2})(?:T| )/.exec(text);
+  if(!match)return new Date(NaN);
+  const [,y,m,d]=match.map(Number);
+  if(m<1||m>12||d<1||d>new Date(Date.UTC(y,m,0)).getUTCDate())return new Date(NaN);
+  return new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)?text:text+'Z');
 }
 export function dateLabel(value) {
-  return value
-    ? utcDate(value).toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "—";
+ const date=utcDate(value);
+ return Number.isFinite(date.getTime())?date.toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'}):'—';
 }
 export function derive(domains, scans) {
   const assets = [],
@@ -60,12 +58,13 @@ export function derive(domains, scans) {
       for (const row of Array.isArray(rows) ? rows : [])
         for (const flag of row.flags || []) add(host, row.port, flag, "TLS");
     for (const host of hosts) {
-      const rows = s.socket_findings?.[host] || [];
+      const rows = Array.isArray(s.socket_findings?.[host]) ? s.socket_findings[host] : [];
       assets.push({
         id: `${id}:${host}`,
         host,
         domain,
-        ports: s.open_ports?.[host] || [],
+        ports: Array.isArray(s.open_ports?.[host]) ? s.open_ports[host] : [],
+        isNew: !s.diff?.first_scan && (s.diff?.new_subdomains || []).includes(host),
         services: [
           ...new Set(
             rows.map((r) => r.fingerprint).filter((f) => f && f !== "unknown"),
@@ -119,14 +118,14 @@ export function demoData() {
     id: `demo-scan-${i}`,
     domain_id: "demo-1",
     status: "completed",
-    created_at: new Date(Date.now() - i * 7200000).toISOString(),
-    completed_at: new Date(Date.now() - i * 7200000 + 30000).toISOString(),
+    created_at: new Date(Date.now() - 60000 - i * 7200000).toISOString(),
+    completed_at: new Date(Date.now() - 60000 - i * 7200000 + 30000).toISOString(),
     subdomains: hosts.slice(0, Math.max(3, 12 - Math.floor(i / 4))),
     open_ports: Object.fromEntries(
-      hosts.map((h, j) => [h, j < 4 ? [22, 80, 443] : [80, 443]]),
+      hosts.slice(0, Math.max(3, 12 - Math.floor(i / 4))).map((h, j) => [h, j < 4 ? [22, 80, 443] : [80, 443]]),
     ),
     socket_findings: Object.fromEntries(
-      hosts.map((h, j) => [
+      hosts.slice(0, Math.max(3, 12 - Math.floor(i / 4))).map((h, j) => [
         h,
         [
           {

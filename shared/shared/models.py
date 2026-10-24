@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from shared.time_utils import database_utc
 
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, JSON, Enum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -18,7 +19,7 @@ class Domain(Base):
     name: Mapped[str] = mapped_column(String, unique=True, index=True)
     verification_token: Mapped[str] = mapped_column(String)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc)
 
 
 class ScanStatus(str, enum.Enum):
@@ -34,12 +35,12 @@ class Scan(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     domain_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("domains.id"))
     status: Mapped[ScanStatus] = mapped_column(Enum(ScanStatus), default=ScanStatus.queued)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # raw pipeline output, one blob per stage for easy inspection/debugging
-    subdomains: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    subdomains: Mapped[list[str] | dict | None] = mapped_column(JSON, nullable=True)
     open_ports: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     socket_findings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    tls_findings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    tls_findings: Mapped[list[dict] | dict | None] = mapped_column(JSON, nullable=True)
     diff: Mapped[dict | None] = mapped_column(JSON, nullable=True)

@@ -1,3 +1,30 @@
+## Visual follow-up — 24 October 2026
+- [x] Semantic severity palette; purple retained for brand/navigation/focus
+- [x] Transparent sidebar scrollbar; scrolling preserved
+- [x] Real running-scan pulse, finite new-asset highlight, completed snapshot fade
+- [x] Reduced-motion support; decorative radar disclosure preserved
+- [ ] Date/history navigation remains deferred
+
+# Current delivery: section 1 only (24 October 2026)
+
+- [x] Inspect existing frontend branch and preserve unrelated work
+- [x] Fix worker-list/legacy ScanOut serialization
+- [x] Normalize naive-UTC writes without a database migration
+- [x] Refresh cooldown, deduplication, rate-limit and partial-response handling
+- [x] Explicit loading, failure and synchronization state
+- [x] Mobile overflow and scrollable sidebar fixes
+- [x] Modal focus and mobile Escape handling
+- [x] 12 frontend tests, 5 backend tests and production build passed
+- [x] Browser checks at desktop, 390px and 320px; fixture API error states
+- [x] Read-only actual API health/domain checks
+- [ ] Real DNS, asyncpg/PostgreSQL and Azure end-to-end verification
+- [ ] Section 2 and subsequent changes: wait for user's next prompt
+
+History/date/comparison and redesign additions from this turn were removed before delivery. Existing backend containers were not rebuilt. See SECTION1-SETUP.md.
+
+---
+Previous checklist (historical):
+
 # ShowDown frontend checklist
 
 Updated 23 October 2026. Branch: frontend.

@@ -1,3 +1,5 @@
+> **24 October update:** Section 1 bug fixes are now applied. See [SECTION1-SETUP.md](SECTION1-SETUP.md) for current setup, verification and resolved backend limitations. Earlier notes below describe the initial delivery.
+
 # ShowDown frontend
 
 React + Vite frontend built on the `frontend` branch. The backend, existing gateway, Azure deployment and infrastructure files have not been changed.

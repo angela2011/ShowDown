@@ -27,10 +27,17 @@ export function Panel({ title, subtitle, action, children, className = "" }) {
 }
 export function Modal({ title, onClose, children }) {
   const ref = useRef();
+  const returnFocus = useRef(document.activeElement);
   useEffect(() => {
-    const previous = document.activeElement;
-    ref.current.showModal();
-    return () => previous?.focus();
+    const previous = returnFocus.current;
+    const dialog = ref.current;
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      // Restore focus after React removes the modal; focusing during removal can
+      // be overridden by the browser's native dialog cleanup.
+      queueMicrotask(() => { if(!dialog.open && previous?.isConnected) previous.focus(); });
+    };
   }, []);
   return (
     <dialog
@@ -85,7 +92,7 @@ export function Metrics({ assets, ports, findings, scans }) {
 }
 export function Activity({ scans }) {
   const sorted = [...scans]
-    .filter((s) => s.status === "completed")
+    .filter((s) => s.status === "completed" && Number.isFinite(utcDate(s.created_at).getTime()))
     .sort((a, b) => utcDate(a.created_at) - utcDate(b.created_at))
     .slice(-24);
   const values = sorted.map((s) =>
@@ -173,7 +180,7 @@ export function Activity({ scans }) {
 }
 export function Risk({ findings }) {
   let at = 0;
-  const colors = ["#ff4f9a", "#b38aff", "#ecd371", "#80e4be"];
+  const colors = ["#ff4f9a", "#f9ac68", "#ecd371", "#80e4be"];
   const counts = severityOrder.map(
     (s) => findings.filter((f) => f.severity === s).length,
   );
@@ -236,7 +243,7 @@ export function Assets({ assets, onSelect, limit }) {
         </thead>
         <tbody>
           {assets.slice(0, limit || assets.length).map((a) => (
-            <tr key={a.id}>
+            <tr key={`${a.id}:${a.scan}`} className={a.isNew ? "asset-new" : undefined}>
               <td>
                 <button
                   className="text-button mono"
@@ -244,6 +251,7 @@ export function Assets({ assets, onSelect, limit }) {
                 >
                   {a.host}
                 </button>
+                {a.isNew && <span className="new-asset-label">New</span>}
               </td>
               <td>
                 <div className="port-list">

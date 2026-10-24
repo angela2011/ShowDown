@@ -1,7 +1,7 @@
 import asyncio
 import os
 import httpx
-from datetime import datetime, timezone
+from shared.time_utils import database_utc
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import select
@@ -78,13 +78,18 @@ async def process_job(job: dict):
             scan.tls_findings = results["tls_findings"]
             scan.diff = diff
             scan.status = ScanStatus.completed
-            scan.completed_at = datetime.now(timezone.utc)
+            scan.completed_at = database_utc()
             await db.commit()
 
             alert = build_alert_message(domain_name, diff)
             await send_alert(alert)
 
         except Exception as e:
+            # A failed flush leaves the transaction unusable until rollback.
+            await db.rollback()
+            scan = await db.get(Scan, scan_id)
+            if scan is None:
+                return
             scan.status = ScanStatus.failed
             scan.diff = {"error": str(e)}
             await db.commit()

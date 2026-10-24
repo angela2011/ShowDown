@@ -58,3 +58,7 @@ test("Non-JSON gateway response is rejected", async () => {
     global.fetch = original;
   }
 });
+
+test('429 exposes retry delay even when gateway returns HTML', async()=>{const original=global.fetch;global.fetch=async()=>({ok:false,status:429,headers:{get:()=> '12'},json:async()=>{throw new Error('html')}});try{await assert.rejects(request('/limit'),e=>e.status===429&&e.retryAfter===12&&/Rate limit/.test(e.message));}finally{global.fetch=original;}});
+test('simultaneous GET requests are coalesced',async()=>{const original=global.fetch;let calls=0,release;global.fetch=()=>{calls++;return new Promise(resolve=>{release=()=>resolve({ok:true,json:async()=>[]})})};try{const a=request('/duplicate'),b=request('/duplicate');assert.equal(calls,1);release();assert.deepEqual(await a,[]);assert.deepEqual(await b,[]);}finally{global.fetch=original;}});
+test('network failures are explicit and never replaced by fixtures',async()=>{const original=global.fetch;global.fetch=async()=>{throw new TypeError('Failed to fetch')};try{await assert.rejects(request('/network'),/Cannot reach the API/);}finally{global.fetch=original;}});
