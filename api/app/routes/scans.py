@@ -20,6 +20,12 @@ redis_client = redis.from_url(settings.redis_url, socket_connect_timeout=5, sock
 @router.post("/{domain_id}", response_model=ScanOut)
 async def trigger_scan(domain_id: UUID, db: AsyncSession = Depends(get_db), user=Depends(current_user)):
     domain = await owned_domain(db, domain_id, user)
+    # Same domain lock used by the scheduler: concurrent manual/periodic
+    # triggers cannot both insert active work for this target.
+    domain = (await db.execute(select(Domain).where(Domain.id == domain.id)
+        .with_for_update().execution_options(populate_existing=True))).scalar_one()
+    if domain.owner_id != user.id:
+        raise HTTPException(404, 'Domain not found')
     if not domain.verified:
         raise HTTPException(status_code=403, detail="Domain not verified. Call /verify first.")
 
@@ -31,6 +37,10 @@ async def trigger_scan(domain_id: UUID, db: AsyncSession = Depends(get_db), user
         domain.verified = False
         await db.commit()
         raise HTTPException(status_code=403, detail="Ownership TXT record no longer matches")
+    active = (await db.execute(select(Scan).where(Scan.domain_id == domain.id,
+        Scan.status.in_([ScanStatus.queued, ScanStatus.running])).limit(1))).scalar_one_or_none()
+    if active:
+        return active
     scan = Scan(domain_id=domain.id, status=ScanStatus.queued)
     db.add(scan)
     await db.commit()

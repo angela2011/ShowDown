@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routes import domains, verify, scans, auth, honeypots
+from app.routes import domains, verify, scans, auth, honeypots, schedules
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from shared.auth_migration import require_auth_schema
@@ -13,6 +13,7 @@ app.include_router(honeypots.router)
 app.include_router(domains.router)
 app.include_router(verify.router)
 app.include_router(scans.router)
+app.include_router(schedules.router)
 
 
 @app.on_event("startup")

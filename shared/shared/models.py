@@ -48,6 +48,18 @@ class Domain(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc)
 
 
+class ScanSchedule(Base):
+    __tablename__ = 'scan_schedules'
+    domain_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('domains.id'), primary_key=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('users.id'))
+    interval_minutes: Mapped[int] = mapped_column(Integer)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_outcome: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    last_scan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+
 class ScanStatus(str, enum.Enum):
     queued = "queued"
     running = "running"
