@@ -16,7 +16,7 @@ async def _check_port(host: str, port: int, sem: asyncio.Semaphore) -> tuple[int
             fut = asyncio.open_connection(host, port)
             reader, writer = await asyncio.wait_for(fut, timeout=TIMEOUT)
             writer.close()
-            await writer.wait_closed()
+            await asyncio.wait_for(writer.wait_closed(), timeout=TIMEOUT)
             return port, True
         except Exception:
             return port, False
@@ -29,10 +29,13 @@ async def scan_host(host: str, ports: list[int] = COMMON_PORTS) -> list[int]:
     return sorted(port for port, is_open in results if is_open)
 
 
-async def scan_hosts(hosts: list[str], ports: list[int] = COMMON_PORTS) -> dict[str, list[int]]:
+async def scan_hosts(hosts: list[str], ports: list[int] = COMMON_PORTS, addresses=None) -> dict[str, list[int]]:
     """Scans multiple hosts, one at a time (each host scan is itself concurrent
     across ports) to avoid overwhelming the network/target."""
     results = {}
     for host in hosts:
-        results[host] = await scan_host(host, ports)
+        found = set()
+        for address in (addresses[host] if addresses is not None else [host]):
+            found.update(await scan_host(address, ports))
+        results[host] = sorted(found)
     return results

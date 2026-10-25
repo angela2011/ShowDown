@@ -1,10 +1,15 @@
 import asyncio
 import os
 import httpx
-from datetime import datetime, timezone
+import logging
+import uuid
+from datetime import timedelta
+from shared.targets import normalize_domain, in_scope, public_addresses, ownership_matches
+from shared.time_utils import database_utc
+from shared.auth_migration import require_auth_schema
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from sqlalchemy import select
+from sqlalchemy import select, or_, and_
 
 from worker.queue_client import get_next_job
 from worker.tasks.subdomain_enum import enumerate_subdomains
@@ -15,7 +20,7 @@ from worker.tasks.diff_engine import diff_scans, build_alert_message
 
 # Shared ORM models (installed from the /shared package in the Dockerfile)
 # so the worker writes to the exact same schema the API reads from.
-from shared.models import Scan, ScanStatus, Domain  # noqa: F401
+from shared.models import Scan, ScanStatus, Domain, User  # noqa: F401
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
@@ -31,75 +36,164 @@ async def send_alert(message: str):
         await client.post(SLACK_WEBHOOK_URL, json={"text": message})
 
 
+SCAN_TIMEOUT = max(10, int(os.environ.get("SCAN_TIMEOUT_SECONDS", "900")))
+MAX_ATTEMPTS = 3
+log = logging.getLogger(__name__)
+
 async def run_pipeline(domain_name: str) -> dict:
-    subdomains = await enumerate_subdomains(domain_name)
-    open_ports = await port_scan_hosts(subdomains)
-    socket_findings = await socket_scan_hosts(open_ports)
-    tls_findings = await check_tls(domain_name)
-
-    return {
-        "subdomains": subdomains,
-        "open_ports": open_ports,
-        "socket_findings": socket_findings,
-        "tls_findings": tls_findings,
-    }
-
+    addresses, warnings = {}, []
+    candidates = await enumerate_subdomains(domain_name, warnings=warnings)
+    for host in candidates[:1000]:
+        try:
+            host = normalize_domain(host)
+            if not in_scope(host, domain_name):
+                raise ValueError("Out-of-scope hostname rejected")
+            ips = await public_addresses(host)
+            if ips:
+                addresses[host] = ips
+            else:
+                warnings.append({"host": host, "stage": "dns", "error": "No A or AAAA records"})
+        except Exception as exc:
+            warnings.append({"host": host, "stage": "dns", "error": type(exc).__name__})
+    if len(candidates) > 1000:
+        warnings.append({"stage": "discovery", "error": "1000-host limit reached"})
+    if not addresses:
+        raise RuntimeError("No safe publicly resolved hosts; scan not performed")
+    open_ports = await port_scan_hosts(list(addresses), addresses=addresses)
+    socket_findings = await socket_scan_hosts(open_ports, addresses=addresses)
+    tls_findings = {}
+    for host, ports in open_ports.items():
+        tls_ports = [p for p in ports if p in {443, 8443, 465, 993, 995}]
+        tls_findings[host] = []
+        for address in addresses[host]:
+            tls_findings[host].extend(await check_tls(host, tls_ports, address=address))
+    return dict(subdomains=sorted(addresses), open_ports=open_ports,
+                socket_findings=socket_findings, tls_findings=tls_findings,
+                resolved_addresses=addresses, warnings=warnings)
 
 async def process_job(job: dict):
-    scan_id = job["scan_id"]
-    domain_name = job["domain"]
-
+    try:
+        scan_id = uuid.UUID(str(job['scan_id']))
+    except (KeyError, ValueError, TypeError):
+        log.warning("Discarded invalid queue job")
+        return
     async with SessionLocal() as db:
-        scan = await db.get(Scan, scan_id)
-        if not scan:
+        # Row lock serializes duplicate deliveries; persisted lease permits crash recovery.
+        result = await db.execute(select(Scan).where(Scan.id == scan_id).with_for_update())
+        scan = result.scalars().first()
+        if not scan or scan.status in (ScanStatus.completed, ScanStatus.failed):
             return
+        metadata = scan.diff or {}
+        now = database_utc()
+        lease = metadata.get('lease_started')
+        if scan.status == ScanStatus.running and lease:
+            from datetime import datetime
+            try:
+                if now - datetime.fromisoformat(lease) < timedelta(seconds=SCAN_TIMEOUT + 60):
+                    return
+            except ValueError:
+                pass
+        attempts = metadata.get('attempts', 0) + 1
+        if attempts > MAX_ATTEMPTS:
+            scan.status = ScanStatus.failed
+            scan.completed_at = now
+            scan.diff = dict(metadata, error='Interrupted job retry limit exceeded')
+            await db.commit()
+            return
+        domain = await db.get(Domain, scan.domain_id)
+        owner = await db.get(User, domain.owner_id) if domain and domain.owner_id else None
+        if not domain or not domain.verified or not owner or not owner.active:
+            scan.status = ScanStatus.failed
+            scan.completed_at = now
+            scan.diff = {'error': 'Domain must have an active owner and DNS verification', 'attempts': attempts}
+            await db.commit()
+            return
+        # Never trust domain names supplied by queue clients.
+        domain_name = domain.name
+        token = domain.verification_token
         scan.status = ScanStatus.running
+        scan.diff = {'attempts': attempts, 'lease_started': now.isoformat()}
         await db.commit()
-
         try:
-            results = await run_pipeline(domain_name)
-
-            # find the previous completed scan for this domain to diff against
-            prev_result = await db.execute(
-                select(Scan)
-                .where(Scan.domain_id == scan.domain_id, Scan.status == ScanStatus.completed)
-                .order_by(Scan.created_at.desc())
-            )
+            async with asyncio.timeout(SCAN_TIMEOUT):
+                domain_name = normalize_domain(domain_name)
+                if not await ownership_matches(domain_name, token):
+                    raise PermissionError('Ownership TXT record no longer matches')
+                results = await run_pipeline(domain_name)
+            prev_result = await db.execute(select(Scan).where(
+                Scan.domain_id == scan.domain_id, Scan.status == ScanStatus.completed,
+                or_(Scan.created_at < scan.created_at, and_(Scan.created_at == scan.created_at, Scan.id < scan_id))
+                ).order_by(Scan.created_at.desc(), Scan.id.desc()).limit(1))
             previous = prev_result.scalars().first()
-            previous_snapshot = None
-            if previous:
-                previous_snapshot = {"subdomains": previous.subdomains, "open_ports": previous.open_ports}
-
+            previous_snapshot = None if not previous else dict(
+                scan_id=str(previous.id), domain=domain_name, subdomains=previous.subdomains,
+                open_ports=previous.open_ports, socket_findings=previous.socket_findings,
+                tls_findings=previous.tls_findings, diff=previous.diff,
+                observed_at=(previous.completed_at or previous.created_at).isoformat())
+            results['domain'] = domain_name
+            results['observed_at'] = database_utc().isoformat()
             diff = diff_scans(previous_snapshot, results)
-
-            scan.subdomains = results["subdomains"]
-            scan.open_ports = results["open_ports"]
-            scan.socket_findings = results["socket_findings"]
-            scan.tls_findings = results["tls_findings"]
+            # Additive metadata avoids a migration and keeps existing result contracts.
+            diff.update(attempts=attempts, resolved_addresses=results.get('resolved_addresses', {}),
+                        warnings=results.get('warnings', []))
+            current = await db.execute(select(Scan).where(Scan.id == scan_id).with_for_update().execution_options(populate_existing=True))
+            scan = current.scalars().first()
+            if not scan or scan.status != ScanStatus.running or (scan.diff or {}).get('attempts') != attempts:
+                return
+            scan.subdomains = results['subdomains']
+            scan.open_ports = results['open_ports']
+            scan.socket_findings = results['socket_findings']
+            scan.tls_findings = results['tls_findings']
             scan.diff = diff
             scan.status = ScanStatus.completed
-            scan.completed_at = datetime.now(timezone.utc)
+            scan.completed_at = database_utc()
             await db.commit()
-
-            alert = build_alert_message(domain_name, diff)
-            await send_alert(alert)
-
-        except Exception as e:
+        except Exception as exc:
+            await db.rollback()
+            current = await db.execute(select(Scan).where(Scan.id == scan_id).with_for_update().execution_options(populate_existing=True))
+            scan = current.scalars().first()
+            if scan is None or scan.status != ScanStatus.running or (scan.diff or {}).get('attempts') != attempts:
+                return
             scan.status = ScanStatus.failed
-            scan.diff = {"error": str(e)}
+            scan.completed_at = database_utc()
+            scan.diff = {'error': str(exc) or type(exc).__name__, 'error_type': type(exc).__name__, 'attempts': attempts}
             await db.commit()
+            return
+        # Notification failure must never invalidate a committed scan.
+        try:
+            await send_alert(build_alert_message(domain_name, diff))
+        except Exception:
+            log.warning('Scan completed; notification failed')
 
+async def recover_pending():
+    # PostgreSQL is the durable source of queued/running work. A Redis outage or
+    # crash after BLPOP cannot strand a scan. Active leases are skipped by claim.
+    async with SessionLocal() as db:
+        result = await db.execute(select(Scan.id).where(Scan.status.in_([
+            ScanStatus.queued, ScanStatus.running])).order_by(Scan.created_at).limit(100))
+        ids = list(result.scalars().all())
+    for scan_id in ids:
+        try:
+            await process_job({'scan_id': str(scan_id)})
+        except Exception:
+            log.exception('Pending job recovery failed; will retry')
 
 async def main():
-    print("Worker started, polling for scan jobs...")
+    async with engine.connect() as connection:
+        await connection.run_sync(require_auth_schema)
+    print('Worker started, polling for scan jobs...')
+    last_recovery = 0
     while True:
-        job = await get_next_job(timeout=5)
-        if job:
-            print(f"Processing job: {job}")
-            await process_job(job)
-        else:
-            await asyncio.sleep(0.5)
+        try:
+            if asyncio.get_running_loop().time() - last_recovery > 30:
+                await recover_pending()
+                last_recovery = asyncio.get_running_loop().time()
+            job = await get_next_job(timeout=5)
+            if job:
+                await process_job(job)
+        except Exception:
+            log.exception('Worker iteration failed; retrying after backoff')
+            await asyncio.sleep(5)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())

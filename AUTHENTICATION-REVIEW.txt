@@ -1,0 +1,102 @@
+SHOWDOWN AUTHENTICATION AND OWNER AUTHORIZATION — 25 October 2026
+
+Status
+Implemented and saved on the existing frontend branch. No commit, push, deployment, live database migration, live account creation or external scan was performed. Earlier local backend/risk work is preserved. Frontend, homepage, Terraform, container configuration, Nginx and CI configuration are unchanged.
+
+Implemented
+- Registration/login with normalized usernames (3–64 ASCII letters/digits/._-) and passwords of 12–128 characters. Username starts with a letter/digit. Passwords are not trimmed or transformed.
+- Argon2id hashing using argon2-cffi 25.1.0; 64 MiB memory, 3 iterations, parallelism 1, automatically generated salts. Password work runs off the event loop with at most two concurrent hash operations. Successful login upgrades outdated hash parameters.
+- Generic wrong-credential responses, dummy hash verification for unknown usernames, and validation errors that omit submitted input so invalid passwords are not echoed.
+- Random 256-bit opaque bearer tokens. Only SHA-256 token digests are stored in the database; tokens are returned once at login. Sessions expire after 8 hours by default; AUTH_SESSION_HOURS supports 1–168. Logout revokes the current token. Deactivated users cannot authenticate or use existing sessions. Responses use Cache-Control: no-store.
+- Persistent atomic database-backed fixed-window auth throttles: 10 registrations/hour per peer; login 10 attempts/15 minutes per normalized username and 60/15 minutes per peer. Successful logins count toward quotas. 429 responses include Retry-After. Untrusted X-Forwarded-For headers are not directly read by application code.
+- Domain.owner_id references User. Scan ownership is inherited through Scan.domain_id -> Domain.owner_id. Findings, risk scores and results remain JSON within the owned scan; no duplicate ownership columns or new finding tables were needed.
+- Every existing domain/verification/scan endpoint requires a valid bearer session. Domain lists filter by owner, and scan detail/history checks enforce that owner before returning raw results or findings. Other users' or unassigned resources return 404. Anonymous/invalid/expired sessions return 401.
+- New domain owner is always the authenticated user, never a request-provided owner_id. Existing globally unique domain-name behavior is retained. DNS TXT verification, enqueue rechecks and worker DNS checks remain enforced.
+- Worker additionally requires a domain assigned to an active account. Legacy unassigned or disabled-owner jobs fail before DNS/discovery/port scanning.
+
+API (existing gateway prefix /api)
+POST /api/auth/register
+  JSON: {"username":"your_username","password":"your chosen passphrase"}
+  Returns 201 with id and username; does not create a session automatically.
+POST /api/auth/login
+  Same JSON fields; returns access_token, token_type="bearer", expires_at (UTC).
+GET /api/auth/me
+POST /api/auth/logout (204)
+  Both require Authorization: Bearer <access_token>.
+
+All existing /api/domains/*, /api/verify/* and /api/scans/* operations now require that same Authorization header. Health, registration/login and API documentation remain public. No account hashes, session digests or other users' verification tokens are returned. The unused API_SECRET_KEY setting is not used for bearer validation or token signing; sessions do not depend on its old default value.
+
+Necessary additive migration
+New tables: users, auth_sessions, auth_throttles. Added nullable domains.owner_id with foreign key and index. NULL is allowed only to preserve/quarantine legacy rows; API registrations always assign an owner.
+The migration is explicit, idempotent and transactional. PostgreSQL uses an advisory transaction lock. It does not rewrite existing domains/scans/results or assign them to the first registered user. API/worker startup detects a legacy domains table without owner_id and refuses to proceed until migration. Fresh database creation remains supported by the API's existing bootstrap behavior.
+
+Operator assignment for existing data
+After migration, a registered account can be explicitly assigned a single unowned domain using app.assign_owner. This is a command requiring database/operator access, not an HTTP route. It refuses existing owners, inactive/missing users and domains with queued/running scans. Assignment includes historical results by association, rotates the DNS token and resets verified=False. The owner retrieves the new token through the existing domain endpoint and must verify DNS again. There is no self-service claim or owner-transfer endpoint. Unassigned queued jobs are rejected by the new worker; resolve pending/running jobs before operator assignment.
+
+Changed files in this turn
+New:
+- api/app/auth.py
+- api/app/routes/auth.py
+- api/app/migrate_auth.py
+- api/app/assign_owner.py
+- shared/shared/auth_migration.py
+- api/tests/test_auth.py
+Modified:
+- shared/shared/models.py
+- api/app/config.py
+- api/app/main.py
+- api/app/routes/domains.py
+- api/app/routes/verify.py
+- api/app/routes/scans.py
+- api/requirements.txt
+- worker/worker/main.py
+- api/tests/test_pipeline.py
+Documentation: AUTHENTICATION-REVIEW.txt (this report).
+Earlier backend and risk changes visible in git status were not discarded or committed.
+
+Verification
+53 tests passed: the existing 40 backend tests plus 13 auth/migration tests. git diff --check passed. Existing pipeline tests now create an active owner; the new auth HTTP tests exercise real registration/login/password hashing/session storage without overriding the authentication dependency.
+Verified with in-memory SQLite, actual Argon2, in-process HTTP requests, and test-owned loopback services:
+- Every existing data route rejects missing, malformed, incorrect and unknown tokens.
+- Cross-user detail/history/read/verify/scan attempts return 404; no DNS or queue calls for rejected cross-user requests.
+- Authorized domain registration/list/read, DNS verification and scan enqueue; owner-only nested findings/history retrieval.
+- Client owner/verified injection does not change ownership or bypass DNS.
+- Distinct salted Argon2id hashes for the same password, correct hash verification and hashed-token storage.
+- Username normalization, duplicate-registration conflict, generic wrong/missing-user login errors and newly generated login tokens.
+- Session expiry, logout revocation, account deactivation and password rehash.
+- Persisted login and registration limits and direct forwarded-IP spoofing rejection.
+- Password validation errors do not echo submitted passwords.
+- Unowned legacy records remain inaccessible; operator assignment preserves history, requires fresh DNS and cannot reassign an owned domain.
+- Worker rejects unassigned/disabled owners before scanning.
+- Idempotent additive migration preserves legacy domain/token/verification values and existing scan data; no user auto-creation or auto-assignment.
+- Prior discovery, persistence, timeout/recovery, schema/UTC and risk/change tests remain passing.
+An initial test assertion falsely matched a sample password "short" against the error code "too_short"; the fixture was corrected. Final full-suite run: 53 tests, 48.024 seconds, OK.
+No live DNS, Redis or production PostgreSQL traffic was used by auth tests. DNS/queue operations use explicit test fixtures; no claim of real external scanning is made.
+
+Reproduce tests (Python 3.12 recommended for the repository's pinned asyncpg):
+cd "C:\Users\Saanvi Garg\OneDrive\Documents\ShowD\ShowDown"
+python -m pip install -r api/requirements.txt -r worker/requirements.txt -r api/tests/requirements.txt -e ./shared
+python -m unittest discover -s api/tests -v
+
+Migration commands for a later reviewed rollout — NOT RUN against your database:
+With the intended existing DATABASE_URL/REDIS_URL configuration, and old API/workers stopped so they cannot continue unauthenticated writes, from the project root:
+$env:PYTHONPATH = "$PWD\api;$PWD\worker;$PWD\shared"
+python -m app.migrate_auth
+After starting the updated API and registering the intended owner, use the actual UUIDs:
+python -m app.assign_owner --domain-id <legacy-domain-uuid> --user-id <registered-user-uuid>
+This second command grants that user the domain's history. Run only after confirming the intended owner. Neither command was executed against the actual project database. No container restart/build/deploy was performed.
+
+Remaining limitations and rollout dependencies
+- Actual PostgreSQL migration/constraint/concurrent-throttle behavior, trusted-proxy address handling, HTTPS deployment and Azure end-to-end operation remain unverified. SQLite testing does not prove PostgreSQL concurrency semantics.
+- The existing frontend is untouched and does not send these tokens. After rollout, its live API calls will receive 401 until a separate login/session integration is implemented. Demo mode is not authentication. No authentication bypass was added for the frontend.
+- HTTPS is required for passwords/bearer tokens outside loopback development. The API does not force HTTPS internally because TLS is normally terminated by the gateway. Proxy trust configuration must be validated before rollout; multiple clients may share a peer quota behind a proxy/NAT.
+- No MFA, password reset/change flow, email verification, logout-all, user deletion, account-management UI or registration invitation policy is implemented. Registration uses usernames, not email identity.
+- Domain names remain globally unique. An unverified registration can reserve a name; contested-domain ownership/expiry/recovery is an operator task. It does not grant DNS verification or access to another owner's data.
+- Deactivation rejects future requests/jobs; it does not interrupt an already executing scan. No domain transfer endpoint exists.
+- The authorization boundary is the API and worker. Database row-level security is not enabled; direct database operators retain privileged access.
+- No historical records were assigned, deleted or exposed. Migration and intended legacy assignments still require execution in the chosen environment.
+
+Reference rationale
+Argon2 hashing and rehash behavior: https://argon2-cffi.readthedocs.io/en/stable/api.html
+Password storage guidance: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+Opaque session entropy/storage guidance: https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html

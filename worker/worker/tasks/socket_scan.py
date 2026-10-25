@@ -65,6 +65,7 @@ async def _probe_port(host: str, port: int) -> dict:
         "fingerprint": "unknown",
         "flags": [],
     }
+    writer = None
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=TIMEOUT)
 
@@ -76,14 +77,14 @@ async def _probe_port(host: str, port: int) -> dict:
 
         if not banner and port in PROBES and PROBES[port]:
             writer.write(PROBES[port])
-            await writer.drain()
+            await asyncio.wait_for(writer.drain(), timeout=TIMEOUT)
             try:
                 banner = await asyncio.wait_for(reader.read(256), timeout=1.5)
             except asyncio.TimeoutError:
                 banner = b""
 
         writer.close()
-        await writer.wait_closed()
+        await asyncio.wait_for(writer.wait_closed(), timeout=TIMEOUT)
 
         if banner:
             finding["banner"] = banner.decode(errors="ignore").strip()
@@ -100,6 +101,10 @@ async def _probe_port(host: str, port: int) -> dict:
     except Exception as e:
         finding["flags"].append(f"connection_error:{type(e).__name__}")
 
+    finally:
+        if writer is not None:
+            writer.close()
+
     return finding
 
 
@@ -109,11 +114,14 @@ async def scan_open_ports(host: str, open_ports: list[int]) -> list[dict]:
     return await asyncio.gather(*(_probe_port(host, p) for p in open_ports))
 
 
-async def scan_hosts(host_to_ports: dict[str, list[int]]) -> dict[str, list[dict]]:
+async def scan_hosts(host_to_ports: dict[str, list[int]], addresses=None) -> dict[str, list[dict]]:
     results = {}
     for host, ports in host_to_ports.items():
         if ports:
-            results[host] = await scan_open_ports(host, ports)
+            results[host] = []
+            for address in (addresses[host] if addresses is not None else [host]):
+                rows = await scan_open_ports(address, ports)
+                results[host].extend(dict(row, address=address) for row in rows)
         else:
             results[host] = []
     return results
