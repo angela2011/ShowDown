@@ -1,8 +1,8 @@
-version: "3.9"
-
 services:
   nginx:
-    build: ./nginx
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
     ports:
       - "8080:80"
     depends_on:
@@ -30,7 +30,6 @@ services:
       - postgres
       - redis
     restart: unless-stopped
-    # scale with: docker compose up --scale worker=3
     deploy:
       replicas: 1
 

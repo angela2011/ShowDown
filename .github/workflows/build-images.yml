@@ -12,14 +12,24 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
         include:
-          - { name: asm-nginx,  context: nginx, file: nginx/Dockerfile }
-          - { name: asm-api,    context: ".",   file: api/Dockerfile }
-          - { name: asm-worker, context: ".",   file: worker/Dockerfile }
+          - name: asm-nginx
+            context: "."
+            file: nginx/Dockerfile
+          - name: asm-api
+            context: "."
+            file: api/Dockerfile
+          - name: asm-worker
+            context: "."
+            file: worker/Dockerfile
+
     steps:
       - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
         with:
