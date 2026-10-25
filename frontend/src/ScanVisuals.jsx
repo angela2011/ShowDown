@@ -3,8 +3,9 @@ import { Radio, Play, RefreshCw } from "lucide-react";
 import { Panel } from "./components";
 import { severityOrder, dateLabel, utcDate } from "./data";
 
-const levels = [...severityOrder, "clean"];
+const levels = [...severityOrder, "clean", "unavailable"];
 function assetSeverity(asset) {
+  if(asset.riskStatus === "invalid")return "unavailable";
   return severityOrder.find(level => asset.findings.some(f => f.severity === level)) || "clean";
 }
 // Host-derived angles keep points stationary across refreshes. Distance encodes
@@ -13,7 +14,7 @@ function position(asset, severity) {
   let hash = 0;
   for (const char of asset.id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   const angle = (hash % 360) * Math.PI / 180;
-  const radius = {critical: 13, high: 23, medium: 32, low: 40, clean: 45}[severity] + ((hash >>> 8) % 5 - 2);
+  const radius = {critical: 13, high: 23, medium: 32, low: 40, clean: 45, unavailable:45}[severity] + ((hash >>> 8) % 5 - 2);
   return {left: `${50 + Math.cos(angle) * radius}%`, top: `${50 + Math.sin(angle) * radius}%`};
 }
 export function SurfaceRadar({assets, onSelect, demo}) {
@@ -23,10 +24,10 @@ export function SurfaceRadar({assets, onSelect, demo}) {
     <div className="radar-layout">
       <div className={`radar-stage ${paused ? "paused" : ""}`} role="group" aria-label="Asset radar. Select a host to inspect its findings.">
         <div className="radar-grid" aria-hidden="true"><span/><span/><span/><span/><i className="radar-cross horizontal"/><i className="radar-cross vertical"/><div className="radar-sweep"/><div className="radar-core"/></div>
-        {assets.map(asset => {const level = assetSeverity(asset);return <button key={`${asset.id}:${asset.scan}`} className={`radar-host ${level} ${asset.isNew ? "asset-new" : ""}`} style={position(asset,level)} aria-label={`Inspect radar host ${asset.host}, ${level === "clean" ? "no observed flags" : level + " severity"}`} title={`${asset.host} · ${level === "clean" ? "No observed flags" : level}`} onClick={() => onSelect(asset)}><span/></button>})}
+        {assets.map(asset => {const level = assetSeverity(asset);return <button key={`${asset.id}:${asset.scan}`} className={`radar-host ${level} ${asset.isNew ? "asset-new" : ""}`} style={position(asset,level)} aria-label={`Inspect radar host ${asset.host}, ${level === "clean" ? "no reported findings" : level + " severity"}`} title={`${asset.host} · ${level === "clean" ? "No reported findings" : level}`} onClick={() => onSelect(asset)}><span/></button>})}
         {!assets.length && <div className="radar-empty">No discovered hosts<br/><small>Completed scans populate the radar.</small></div>}
       </div>
-      <div className="radar-key"><h3>Your perimeter, in focus.</h3><p>Select a host to inspect it. Hosts closer to the center have higher-severity observations.</p><div className="radar-legend">{levels.map(level => <div key={level}><i className={`severity-dot ${level}`}/><span>{level === "clean" ? "No flags" : level}</span><strong>{counts[level]}</strong></div>)}</div><small>The sweep is a visual animation, not scan progress.</small></div>
+      <div className="radar-key"><h3>Your perimeter, in focus.</h3><p>Backend severity where available; legacy classifications are labelled in host details. Select a host to inspect it. Hosts closer to the center have higher-severity observations.</p><div className="radar-legend">{levels.map(level => <div key={level}><i className={`severity-dot ${level}`}/><span>{level === "clean" ? "No findings" : level}</span><strong>{counts[level]}</strong></div>)}</div><small>The sweep is a visual animation, not scan progress.</small></div>
     </div>
   </Panel>;
 }

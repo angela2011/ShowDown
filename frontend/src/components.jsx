@@ -194,7 +194,7 @@ export function Risk({ findings }) {
   return (
     <Panel
       title="Risk distribution"
-      subtitle="Frontend severity mapping · observed flags"
+      subtitle="Backend severity where available · legacy findings labelled"
     >
       <div className="risk-body">
         <div
@@ -294,7 +294,7 @@ export function Findings({ findings, onSelect, limit }) {
           <span>
             <strong>{f.title}</strong>
             <small>
-              {f.host} : {f.port}
+              {f.host} : {f.port} · {f.provenance === "backend" ? `Backend · ${f.score}/100` : "Legacy flag classification"}
             </small>
           </span>
           <Badge tone={f.severity}>{f.severity}</Badge>

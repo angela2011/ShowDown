@@ -18,6 +18,7 @@ import {
   Copy,
 } from "lucide-react";
 import { api } from "./api";
+import {RiskDetails, RiskSummary} from "./RiskDetails";
 import { SurfaceRadar, ScanControls } from "./ScanVisuals";
 import { derive, dateLabel } from "./data";
 import { useMonitor } from "./useMonitor";
@@ -298,6 +299,7 @@ export default function App({user,onLogout}) {
                 findings={derived.findings.length}
                 scans={scans.filter((s) => s.status === "completed").length}
               />
+              <Panel title="Risk assessments and changes"><RiskSummary scans={derived.snapshots} domains={domains} demo={demo} onSelect={s=>setModal({type:"detail",value:s})}/></Panel>
               <SurfaceRadar assets={derived.assets} demo={demo} onSelect={a => setModal({type: "asset", value:a})}/>
               <div className="charts">
                 <Activity scans={scans} />
@@ -350,7 +352,7 @@ export default function App({user,onLogout}) {
               }
               subtitle={
                 page === "Findings"
-                  ? "Severity is mapped in the frontend; it is not a backend risk score."
+                  ? "Backend severity and scores where available. Legacy flag classifications are labelled."
                   : null
               }
             >
@@ -488,8 +490,7 @@ export default function App({user,onLogout}) {
                   <h3>Backend limitations</h3>
                   <p>
                     Honeypot and WAF controls are not available in the supplied
-                    routes. Dashboard severity is
-                    a documented frontend classification of returned flags.
+                    routes. Backend risk assessments drive severity when available; legacy scans retain labelled flag classifications.
                   </p>
                 </div>
               </div>
@@ -643,14 +644,11 @@ export default function App({user,onLogout}) {
                     {modal.value.severity}
                   </Badge>
                   <h3>{modal.value.title}</h3>
-                  <p>
-                    This is an observed {modal.value.source.toLowerCase()} flag,
-                    not proof of an exploitable vulnerability. Review the
-                    service configuration and verify the observation.
-                  </p>
+                  {modal.value.provenance==='backend'?<><p>Backend score: {modal.value.score}/100 · Rule: {modal.value.rule_id}</p><p>{modal.value.reason}</p><h4>Supporting evidence</h4><pre>{JSON.stringify(modal.value.evidence??null,null,2)}</pre></>:<p>Legacy flag classification; no backend score or structured evidence available.</p>}
                 </>
               )}
-              <pre>{JSON.stringify(modal.value, null, 2)}</pre>
+              {modal.type==="detail" && <RiskDetails scan={modal.value} onFinding={f=>setModal({type:"finding",value:f})}/>}
+              <details><summary>Raw details</summary><pre>{JSON.stringify(modal.value, null, 2)}</pre></details>
             </div>
           )}
           {error && (

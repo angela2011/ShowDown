@@ -1,3 +1,4 @@
+import {riskView, changesView} from './risk.js';
 export const severityOrder = ["critical", "high", "medium", "low"];
 export function utcDate(value) {
   if (typeof value !== 'string' || !value.trim()) return new Date(NaN);
@@ -22,12 +23,16 @@ export function derive(domains, scans) {
     if (s.status === "completed" && !latest.has(s.domain_id))
       latest.set(s.domain_id, s);
   for (const [id, s] of latest) {
+    const risk = riskView(s);
+    const changes = changesView(s);
+    if(risk.status==='backend')findings.push(...risk.findings);
     const domain = domains.find((d) => d.id === id)?.name || id;
     const hosts = new Set([
       ...(Array.isArray(s.subdomains)
         ? s.subdomains
         : Object.keys(s.subdomains || {})),
       ...Object.keys(s.open_ports || {}),
+      ...risk.findings.map(f=>f.host),
     ]);
     const add = (host, port, flag, source) => {
       let severity = "low";
@@ -45,9 +50,11 @@ export function derive(domains, scans) {
         title: flag.replaceAll("_", " "),
         severity,
         source,
+        provenance: 'legacy',
         scan: s.id,
       });
     };
+    if(risk.status==='legacy'){
     for (const [host, rows] of Object.entries(s.socket_findings || {}))
       for (const row of Array.isArray(rows) ? rows : [])
         for (const flag of row.flags || []) add(host, row.port, flag, "Socket");
@@ -57,6 +64,7 @@ export function derive(domains, scans) {
     for (const [host, rows] of Object.entries(tls))
       for (const row of Array.isArray(rows) ? rows : [])
         for (const flag of row.flags || []) add(host, row.port, flag, "TLS");
+    }
     for (const host of hosts) {
       const rows = Array.isArray(s.socket_findings?.[host]) ? s.socket_findings[host] : [];
       assets.push({
@@ -64,7 +72,8 @@ export function derive(domains, scans) {
         host,
         domain,
         ports: Array.isArray(s.open_ports?.[host]) ? s.open_ports[host] : [],
-        isNew: !s.diff?.first_scan && (s.diff?.new_subdomains || []).includes(host),
+        isNew: !s.diff?.first_scan && (changes.status==='legacy' ? (s.diff?.new_subdomains || []).includes(host) : Boolean(changes.groups.assets?.new.some(a=>a.host===host))),
+        riskStatus: risk.status,
         services: [
           ...new Set(
             rows.map((r) => r.fingerprint).filter((f) => f && f !== "unknown"),
@@ -82,6 +91,7 @@ export function derive(domains, scans) {
   return {
     assets,
     findings,
+    snapshots: [...latest.values()],
     ports: assets.reduce((n, a) => n + a.ports.length, 0),
   };
 }
