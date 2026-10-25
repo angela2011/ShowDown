@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routes import domains, verify, scans, auth
+from app.routes import domains, verify, scans, auth, honeypots
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from shared.auth_migration import require_auth_schema
@@ -9,6 +9,7 @@ from shared.models import Base
 app = FastAPI(title="AttackSurface Monitor API")
 
 app.include_router(auth.router)
+app.include_router(honeypots.router)
 app.include_router(domains.router)
 app.include_router(verify.router)
 app.include_router(scans.router)

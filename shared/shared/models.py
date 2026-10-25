@@ -70,3 +70,53 @@ class Scan(Base):
     socket_findings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     tls_findings: Mapped[list[dict] | dict | None] = mapped_column(JSON, nullable=True)
     diff: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+# Decoys are independent of scans; all their records inherit sensor ownership.
+class DecoySensor(Base):
+    __tablename__ = 'decoy_sensors'
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('users.id'), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    response_mode: Mapped[str] = mapped_column(String(12), default='disabled')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc)
+
+
+class DecoyEvent(Base):
+    __tablename__ = 'decoy_events'
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    sensor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('decoy_sensors.id'), index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc, index=True)
+    source_ip: Mapped[str] = mapped_column(String(45), index=True)
+    source_verified: Mapped[bool] = mapped_column(Boolean)
+    protocol: Mapped[str] = mapped_column(String(12))
+    details: Mapped[dict] = mapped_column(JSON)
+    confidence: Mapped[int] = mapped_column(Integer)
+    severity: Mapped[str] = mapped_column(String(12))
+    reasons: Mapped[list] = mapped_column(JSON)
+
+
+class DecoyBlock(Base):
+    __tablename__ = 'decoy_blocks'
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sensor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('decoy_sensors.id'), index=True)
+    source_ip: Mapped[str] = mapped_column(String(45), index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('decoy_events.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default='active')
+    reason: Mapped[str] = mapped_column(String(240))
+
+
+class DecoyAudit(Base):
+    __tablename__ = 'decoy_audit'
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sensor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('decoy_sensors.id'), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc, index=True)
+    actor: Mapped[str] = mapped_column(String(80))
+    action: Mapped[str] = mapped_column(String(40))
+    details: Mapped[dict] = mapped_column(JSON)

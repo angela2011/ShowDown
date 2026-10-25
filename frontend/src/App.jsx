@@ -18,6 +18,7 @@ import {
   Copy,
 } from "lucide-react";
 import { api } from "./api";
+import HoneypotPanel from './HoneypotPanel';
 import {RiskDetails, RiskSummary} from "./RiskDetails";
 import { SurfaceRadar, ScanControls } from "./ScanVisuals";
 import { derive, dateLabel } from "./data";
@@ -489,13 +490,13 @@ export default function App({user,onLogout}) {
                 <div>
                   <h3>Backend limitations</h3>
                   <p>
-                    Honeypot and WAF controls are not available in the supplied
-                    routes. Backend risk assessments drive severity when available; legacy scans retain labelled flag classifications.
+                    Decoy history is available below on an updated backend. Responses are decoy-scoped; Azure-wide WAF controls are not enabled. Backend risk assessments drive severity when available; legacy scans retain labelled flag classifications.
                   </p>
                 </div>
               </div>
             </Panel>
           )}
+          {page === "Settings" && <HoneypotPanel key={String(demo)} demo={demo}/>}
           <footer className="page-footer">
             <span>ShowDown · Attack surface intelligence</span>
             <span>
