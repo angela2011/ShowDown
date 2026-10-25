@@ -5,7 +5,7 @@ import redis.asyncio as redis
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 SCAN_QUEUE_NAME = os.environ.get("SCAN_QUEUE_NAME", "scan_jobs")
 
-client = redis.from_url(REDIS_URL)
+client = redis.from_url(REDIS_URL, socket_connect_timeout=5, socket_timeout=10)
 
 
 async def get_next_job(timeout: int = 5):

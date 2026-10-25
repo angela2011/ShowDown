@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from shared.time_utils import database_utc
 
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, JSON, Enum
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, JSON, Enum, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID
 import enum
@@ -12,11 +12,37 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class AuthThrottle(Base):
+    __tablename__ = "auth_throttles"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class Domain(Base):
     __tablename__ = "domains"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    # NULL only for quarantined legacy domains; new registrations require an owner.
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     verification_token: Mapped[str] = mapped_column(String)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc)

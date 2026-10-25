@@ -1,4 +1,7 @@
-import test from "node:test";
+import test, {beforeEach,afterEach} from "node:test";
+import {setSession,clearSession} from "../src/session.js";
+beforeEach(()=>setSession({access_token:"A".repeat(43),token_type:"bearer",expires_at:new Date(Date.now()+60000).toISOString()}));
+afterEach(()=>clearSession());
 import assert from "node:assert/strict";
 import { api, request } from "../src/api.js";
 test("API client preserves route paths, methods and payloads", async () => {

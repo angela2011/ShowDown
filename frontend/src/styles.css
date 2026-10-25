@@ -1346,8 +1346,8 @@ pre {
 @media(prefers-reduced-motion:reduce){.radar-sweep,.scan-status.is-active>svg{animation:none!important}}
 
 /* Section 1 bug fixes: preserve design, constrain overflow and scroll sidebar. */
-.sidebar{overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:transparent transparent;scrollbar-gutter:stable}
-.sidebar>*{flex-shrink:0}.sidebar::-webkit-scrollbar{width:6px}.sidebar::-webkit-scrollbar-thumb{background:transparent;border-radius:8px}.sidebar::-webkit-scrollbar-track{background:transparent}.sidebar-footer{padding-bottom:12px}
+.sidebar{overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#a685ff55 transparent;scrollbar-gutter:stable}
+.sidebar>*{flex-shrink:0}.sidebar::-webkit-scrollbar{width:6px}.sidebar::-webkit-scrollbar-thumb{background:#a685ff55;border-radius:8px}.sidebar::-webkit-scrollbar-track{background:transparent}.sidebar-footer{padding-bottom:12px}
 main,.content,.app,.metrics>*,.charts>*,.data-grid>*,.radar-layout>*,.panel,.table-wrap,.page-head>*,.toolbar>*,.scan-controls{min-width:0}
 .content{width:100%;max-width:1720px}.scan-controls{flex-shrink:1;max-width:100%}.table-wrap{position:relative;max-width:100%;overflow:auto}.panel-head{flex-wrap:wrap}.panel-head>div{min-width:0}.alert p,.scan-status small,.page-footer,.radar-key p{overflow-wrap:anywhere}
 .sync-state{font-size:11px;line-height:1.6;color:var(--muted);margin:8px 0 14px}.sr-only{clip-path:inset(50%);white-space:nowrap;margin:-1px;border:0;padding:0}

@@ -1,0 +1,7 @@
+.auth-screen{min-height:100dvh;display:grid;place-items:center;padding:28px 16px;background:radial-gradient(ellipse at top,#20203855,transparent 65%),#080e10}
+.auth-card{width:min(100%,440px);padding:32px;border:1px solid #293737;border-radius:12px;background:#10191b;box-shadow:0 22px 80px #0004}
+.auth-brand{display:flex;align-items:center;gap:8px;font-size:24px;font-weight:700;text-decoration:none;margin-bottom:30px}.auth-brand svg,.auth-brand span{color:#a685ff}
+.auth-card h1{font-size:28px;margin-bottom:12px}.auth-intro,.auth-switch{font-size:13px;line-height:1.7;color:var(--muted)}.auth-card .field{margin-bottom:7px}.auth-card input{min-width:0;width:100%}.auth-card small{font-size:11px;line-height:1.6;color:var(--muted)}
+.auth-submit{width:100%;justify-content:center;margin:24px 0 16px}.auth-switch a{color:#c6b2ff}.auth-home{display:inline-block;margin-top:18px;font-size:12px;color:var(--muted)}.auth-notice{font-size:13px;line-height:1.6;padding:12px;border:1px solid #55446f;border-radius:6px;margin:16px 0;background:#a685ff0c}
+.auth-card .form-error{font-size:13px;line-height:1.6;margin-top:16px;overflow-wrap:anywhere}.auth-card>.secondary{margin-left:8px}.account-controls{margin:14px 0;padding-top:12px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px}.account-controls span{overflow-wrap:anywhere;min-width:0}.account-controls button{flex-shrink:0}
+@media(max-width:400px){.auth-card{padding:24px 20px}.auth-card h1{font-size:25px}}

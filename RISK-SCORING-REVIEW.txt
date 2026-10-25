@@ -1,0 +1,64 @@
+SHOWDOWN RISK SCORING AND CHANGE DETECTION — 25 October 2026
+
+Scope and source
+Implemented synopsis modules 3 and 4 using existing scan JSON fields. The synopsis requests exposure-based prioritization but does not define numeric thresholds; the rules below are explicitly project policy, not CVSS or a probability of compromise.
+Existing frontend, homepage, Terraform, API routes, database models/schema and deployment setup were not modified by this follow-up. Earlier uncommitted backend repairs are preserved. Branch: frontend. No commit, push, deployment or external target scan.
+
+Files changed in this follow-up
+- worker/worker/tasks/risk_engine.py (new): normalization, stable finding IDs, explainable rules and aggregate scoring.
+- worker/worker/tasks/diff_engine.py: full inventory/findings comparisons; existing new_subdomains, removed_subdomains, new_open_ports, closed_ports and alert function retained.
+- worker/worker/main.py: passes previous services/TLS/IPs, timestamps and scan ID; selects an earlier completed baseline, excludes failed/newer scans; persists comparison and risk in the existing result transaction.
+- worker/worker/tasks/tls_check.py: records SHA-256 certificate fingerprint for reliable replacement detection.
+- api/tests/test_risk_changes.py (new): rules, thresholds, change detection and actual local HTTP observations.
+- api/tests/test_pipeline.py: successive-scan persistence and HTTP-level API/detail/history coverage.
+- RISK-SCORING-REVIEW.txt (this documentation).
+
+Rules, version 1.0
+Scores 1–39 Low; 40–69 Medium; 70–89 High; 90–100 Critical. Snapshot score is the maximum finding score, not a sum. Empty findings yield score 0 and severity null (no rule matched, not proof of safety).
+- Possible version disclosure reported by the socket scanner: 20 / Low.
+- Newly observed port relative to a previous completed scan: 40 / Medium. First scan is a baseline, not proof of a new exposure.
+- Observed plaintext HTTP response: 40 / Medium. Port 80 alone is insufficient evidence; redirects and sensitive content are not tested.
+- Database-conventional port without confirmed service: 60 / Medium; labelled unconfirmed. Ports: 1433, 1521, 3306, 5432, 6379, 9200, 27017.
+- Banner-confirmed public database service: 80 / High. Recognized fingerprints: mysql, postgresql, redis, mongodb, mssql, elasticsearch. The current scanner may not identify all of these.
+- Newly exposed AND banner-confirmed database: 90 / Critical. Authentication, exploitability and data access are not tested. On a subsequent unchanged scan, the new-exposure context expires and this rule returns to High.
+- Conventional remote-access port 23, 3389 or 5900: 70 / High; protocol identity/authentication are not asserted from port alone.
+- Plaintext response on expected TLS port: 70 / High.
+- Observed obsolete TLS/SSL protocol: 70 / High.
+- TLS expiry within 30 days: 40 / Medium; within 7 days including exactly 7: 70 / High; already expired: 80 / High. Expiry is evaluated in UTC at the stored observation time, not on later API reads. Failed handshakes do not establish expiration.
+Known-vulnerable versions are not inferred from version strings: there is no maintained advisory source/version matcher in this repository. No fabricated CVE findings are generated.
+
+Stored contract — existing GET /scans/{scan_id} and GET /scans/domain/{domain_id}
+At the existing gateway these routes are under /api.
+- diff.risk: version, observed_at, score, severity, method, counts, findings.
+- Each finding: id, rule_id, host, port, address, severity, score, title, reason, evidence.
+- diff.baseline_scan_id: ID of the earlier completed scan, or null for baseline.
+- diff.changes.assets / ports / services / certificates / findings: each has new, changed (before/after), no_longer_detected arrays.
+- diff.comparison_notes: absence/coverage caveats and legacy reconstruction notes.
+- Existing raw scan fields and legacy diff keys remain available unchanged in shape.
+No migration, new endpoint, backfill or API response-schema change is needed because diff is already serialized as JSON. New completed scans carry the new fields. Existing historical scans retain their original data; when used as baselines, missing historical risk is reconstructed from raw observations and labelled as such. Previous new-port context cannot be reconstructed without the older predecessor.
+
+Comparison semantics
+Assets are keyed by hostname; IP sets, ports, service observations and certificates can mark an asset changed. Ports are keyed by host+port; services/certificates by host+port+observed address. Certificate expiry date/issuer/subject/serial/SAN/protocol/cipher/fingerprint changes are recorded; day-count drift alone is not certificate rotation. Changed service banners include observed banner differences; this can include volatile response text and is not automatically a vulnerability. Address availability enrichment in legacy data can appear as new/no-longer-detected observations.
+No longer detected means absent from this scan, not confirmed removal, closure or remediation. Failed handshakes and partial discovery can cause absence. Legacy closed_ports is an alias for ports no longer observed. Discovery warnings are preserved and comparisons warn about incomplete coverage. Complete-scan failures are not used as baselines. Port scan configuration changes can also affect absence; configuration snapshots are not available in legacy records.
+Newly exposed port findings are contextual and can disappear on the next unchanged scan; this is not a remediation claim. Finding IDs remain stable for a rule/host/port/address when severity or evidence changes.
+
+Verification
+40 backend tests passed, including the previous 24 tests and 16 additions. git diff --check passed.
+- Deterministic rules, all severity levels, expiry boundaries/timezone offsets, evidence requirements, duplicate suppression and stable IDs.
+- New/changed/no-longer-detected assets, IP sets, ports, services, certificate rotation and findings; partial scans, legacy dictionaries/lists/nulls, unchanged certificate aging and absence wording.
+- Real SQLite ORM persistence and in-process HTTP requests to the existing detail/history routes, asserting Critical risk, baseline selection and preserved history. DNS/scan stage outputs in that test are controlled fixtures, not live discovery.
+- A test-owned loopback TCP server emitted an actual HTTP response. The real socket probe identified HTTP and the risk engine produced the corresponding Medium finding. This does not validate the public DNS/ownership or production networking path.
+- Existing loopback port/SSH tests and schema/timezone, failure/recovery/ownership tests continue to pass.
+No production mock data was added. No external target was scanned. No claim of live PostgreSQL/Redis/Azure verification is made. The isolated environment used Python 3.13 and SQLite; production Dockerfiles use Python 3.12/PostgreSQL.
+
+Reproduce from project root (Python 3.12 recommended for pinned asyncpg):
+cd "C:\Users\Saanvi Garg\OneDrive\Documents\ShowD\ShowDown"
+python -m pip install -r api/requirements.txt -r worker/requirements.txt -r api/tests/requirements.txt -e ./shared
+python -m unittest discover -s api/tests -v
+
+Remaining work
+- Authorized live scan and PostgreSQL/Redis/Azure integration verification, including concurrent baseline selection under real production load.
+- Separate dashboard integration to consume diff.risk and diff.changes; no frontend work was done.
+- Maintained vulnerability advisory/version-matching source for known-vulnerable-service findings.
+- Explicitly scoped historical backfill if desired; none was performed.
+- Certificate chain/hostname trust validation and authenticated service checks remain unsupported by current scanner. No authentication bypass or unauthorized scan capability was added.

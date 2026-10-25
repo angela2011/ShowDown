@@ -6,6 +6,12 @@ from pydantic import BaseModel, field_validator
 class DomainCreate(BaseModel):
     name: str
 
+    @field_validator('name')
+    @classmethod
+    def valid_name(cls, value):
+        from shared.targets import normalize_domain
+        return normalize_domain(value)
+
 
 class DomainOut(BaseModel):
     id: uuid.UUID

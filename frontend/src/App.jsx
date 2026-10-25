@@ -40,7 +40,7 @@ const navigation = [
   ["Domains", Globe],
   ["Settings", Settings],
 ];
-export default function App() {
+export default function App({user,onLogout}) {
   const [page,setPage]=useState('Overview'),[mobile,setMobile]=useState(false),[scope,setScope]=useState('all'),[search,setSearch]=useState(''),[severity,setSeverity]=useState('all'),[modal,setModal]=useState(null),[notice,setNotice]=useState(''),[mutating,setMutating]=useState(false);
   const monitor=useMonitor();
   const {demo,data,error,setError,busy:loading,connected,lastSync,cooldown,load}=monitor;
@@ -125,11 +125,8 @@ export default function App() {
       <aside id="workspace-sidebar" aria-label="Workspace navigation" className={mobile ? "sidebar open" : "sidebar"}>
         <a
           className="brand"
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            navigate("Overview");
-          }}
+          href="/"
+          aria-label="ShowDown home"
         >
           <Shield size={31} />
           <span>
@@ -159,6 +156,7 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
+          <div className="account-controls"><span>{user?.username}</span><button className="text-button" onClick={onLogout}>Sign out</button></div>
           <div className="connection">
             <span className={`status-dot ${connected || demo ? "on" : ""}`} />
             <div>
@@ -489,8 +487,8 @@ export default function App() {
                 <div>
                   <h3>Backend limitations</h3>
                   <p>
-                    Authentication, honeypots, WAF response and a risk-scoring
-                    API are not implemented in the supplied routes. Severity is
+                    Honeypot and WAF controls are not available in the supplied
+                    routes. Dashboard severity is
                     a documented frontend classification of returned flags.
                   </p>
                 </div>

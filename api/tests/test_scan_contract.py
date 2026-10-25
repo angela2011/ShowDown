@@ -41,35 +41,6 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(Scan.__table__.c.completed_at.type.timezone)
         self.assertEqual(ScanOut(**self.payload(completed_at=aware)).completed_at,datetime(2026,1,1,tzinfo=timezone.utc))
 
-class WorkerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_pipeline_commit_uses_naive_utc_without_network_scan(self):
-        with patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=MagicMock()):
-            from worker import main
-        record=Scan(id=uuid.uuid4(),domain_id=uuid.uuid4(),status=ScanStatus.queued,created_at=datetime(2026,1,1))
-        db=AsyncMock();db.get.return_value=record
-        result=MagicMock();result.scalars.return_value.first.return_value=None
-        db.execute.return_value=result
-        context=MagicMock();context.__aenter__=AsyncMock(return_value=db);context.__aexit__=AsyncMock(return_value=None)
-        output={"subdomains":["owned.example"],"open_ports":{},"socket_findings":{},"tls_findings":[]}
-        with patch.object(main,"SessionLocal",return_value=context),patch.object(main,"run_pipeline",AsyncMock(return_value=output)),patch.object(main,"send_alert",AsyncMock()):
-            await main.process_job({"scan_id":str(record.id),"domain":"owned.example"})
-        self.assertEqual(record.status,ScanStatus.completed)
-        self.assertIsNone(record.completed_at.tzinfo)
-        self.assertEqual(record.subdomains,["owned.example"])
-        self.assertEqual(db.commit.await_count,2)
-        serialized=ScanOut.model_validate(record)
-        self.assertEqual(serialized.completed_at.tzinfo,timezone.utc)
-
-    async def test_failed_pipeline_rolls_back_and_records_failure(self):
-        with patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=MagicMock()):
-            from worker import main
-        record=Scan(id=uuid.uuid4(),domain_id=uuid.uuid4(),status=ScanStatus.queued,created_at=datetime(2026,1,1))
-        db=AsyncMock();db.get.return_value=record
-        context=MagicMock();context.__aenter__=AsyncMock(return_value=db);context.__aexit__=AsyncMock(return_value=None)
-        with patch.object(main,"SessionLocal",return_value=context),patch.object(main,"run_pipeline",AsyncMock(side_effect=RuntimeError("test failure"))):
-            await main.process_job({"scan_id":str(record.id),"domain":"owned.example"})
-        db.rollback.assert_awaited_once()
-        self.assertEqual(record.status,ScanStatus.failed)
-        self.assertEqual(record.diff,{"error":"test failure"})
-
-if __name__=="__main__":unittest.main()
+# Worker transitions are tested against an isolated real ORM database in
+# test_pipeline.py rather than mocking commits and row-lock queries.
+if __name__ == '__main__': unittest.main()
