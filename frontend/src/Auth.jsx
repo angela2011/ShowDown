@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Shield, ArrowRight } from 'lucide-react';
+import { useEffect, useRef, useState, useSyncExternalStore, useId } from 'react';
+import { Shield, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { authApi } from './api';
 import { getSession, setSession, clearSession, subscribeSession, sessionReason } from './session';
 import './auth.css';
@@ -13,6 +13,16 @@ function Frame({children}) {
  return <div className="auth-screen"><div className="auth-card">
    <a className="auth-brand" href="/" aria-label="ShowDown home"><Shield size={27}/>ShowDown<span>.</span></a>
    {children}
+ </div></div>;
+}
+function PasswordField({label,...props}) {
+ const [visible,setVisible]=useState(false);
+ const id=useId();
+ return <div className="field"><label htmlFor={id}>{label}</label><div className="auth-password-input">
+  <input {...props} id={id} type={visible?'text':'password'}/>
+  <button type="button" className="auth-password-toggle" aria-label={`${visible?'Hide':'Show'} ${label.toLowerCase()}`} aria-controls={id} disabled={props.disabled} onClick={()=>setVisible(value=>!value)}>
+   {visible?<EyeOff size={18} aria-hidden="true"/>:<Eye size={18} aria-hidden="true"/>}
+  </button>
  </div></div>;
 }
 export function AuthPage({register=false}) {
@@ -43,9 +53,9 @@ export function AuthPage({register=false}) {
   <form onSubmit={submit}>
    <label className="field">Username<input autoComplete="username" required minLength={3} maxLength={64} pattern="[a-zA-Z0-9][a-zA-Z0-9_.\-]{2,63}" value={username} onChange={e=>setUsername(e.target.value)} disabled={busy} aria-describedby="username-help"/></label>
    <small id="username-help">3–64 letters, numbers, dots, underscores or hyphens.</small>
-   <label className="field">Password<input type="password" autoComplete={register?'new-password':'current-password'} required minLength={6} maxLength={128} value={password} onChange={e=>setPassword(e.target.value)} disabled={busy} aria-describedby="password-help"/></label>
+   <PasswordField label="Password" autoComplete={register?'new-password':'current-password'} required minLength={6} maxLength={128} value={password} onChange={e=>setPassword(e.target.value)} disabled={busy} aria-describedby="password-help"/>
    <small id="password-help">6–128 characters. Use a unique passphrase.</small>
-   {register && <label className="field">Confirm password<input type="password" autoComplete="new-password" required minLength={6} maxLength={128} value={confirmation} onChange={e=>setConfirmation(e.target.value)} disabled={busy}/></label>}
+   {register && <PasswordField label="Confirm password" autoComplete="new-password" required minLength={6} maxLength={128} value={confirmation} onChange={e=>setConfirmation(e.target.value)} disabled={busy}/>}
    {error && <p className="form-error" role="alert">{error}</p>}
    <button className="primary auth-submit" disabled={busy || wait>0}>{busy?'Please wait…':wait>0?`Try again in ${wait}s`:register?'Create account':'Sign in'}<ArrowRight size={16}/></button>
   </form>
