@@ -1,6 +1,5 @@
 import asyncio
 import os
-import httpx
 import logging
 import uuid
 from datetime import timedelta
@@ -16,11 +15,12 @@ from worker.tasks.subdomain_enum import enumerate_subdomains
 from worker.tasks.port_scan import scan_hosts as port_scan_hosts
 from worker.tasks.socket_scan import scan_hosts as socket_scan_hosts
 from worker.tasks.tls_check import check_tls
-from worker.tasks.diff_engine import diff_scans, build_alert_message
+from worker.tasks.diff_engine import diff_scans
+from worker.notifications import events_for, slack_delivery, deliver_pending
 
 # Shared ORM models (installed from the /shared package in the Dockerfile)
 # so the worker writes to the exact same schema the API reads from.
-from shared.models import Scan, ScanStatus, Domain, User  # noqa: F401
+from shared.models import Scan, ScanStatus, Domain, User, ScanNotification  # noqa: F401
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
@@ -30,10 +30,7 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def send_alert(message: str):
-    if not SLACK_WEBHOOK_URL or not message:
-        return
-    async with httpx.AsyncClient(timeout=10) as client:
-        await client.post(SLACK_WEBHOOK_URL, json={"text": message})
+    return await slack_delivery(SLACK_WEBHOOK_URL, message)
 
 
 SCAN_TIMEOUT = max(10, int(os.environ.get("SCAN_TIMEOUT_SECONDS", "900")))
@@ -147,6 +144,11 @@ async def process_job(job: dict):
             scan.diff = diff
             scan.status = ScanStatus.completed
             scan.completed_at = database_utc()
+            if SLACK_WEBHOOK_URL:
+                notification_events = events_for(domain_name, diff, previous_snapshot)
+                if notification_events:
+                    db.add(ScanNotification(scan_id=scan.id, domain_id=domain.id,
+                        owner_id=domain.owner_id, events=notification_events))
             await db.commit()
         except Exception as exc:
             await db.rollback()
@@ -161,7 +163,8 @@ async def process_job(job: dict):
             return
         # Notification failure must never invalidate a committed scan.
         try:
-            await send_alert(build_alert_message(domain_name, diff))
+            if SLACK_WEBHOOK_URL:
+                await deliver_pending(SessionLocal, send_alert)
         except Exception:
             log.warning('Scan completed; notification failed')
 
@@ -187,6 +190,8 @@ async def main():
         try:
             if asyncio.get_running_loop().time() - last_recovery > 30:
                 await recover_pending()
+                if SLACK_WEBHOOK_URL:
+                    await deliver_pending(SessionLocal, send_alert)
                 last_recovery = asyncio.get_running_loop().time()
             job = await get_next_job(timeout=5)
             if job:

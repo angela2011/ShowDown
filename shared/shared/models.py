@@ -84,6 +84,21 @@ class Scan(Base):
     diff: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class ScanNotification(Base):
+    __tablename__ = 'scan_notifications'
+    scan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('scans.id'), primary_key=True)
+    domain_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('domains.id'), index=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('users.id'))
+    events: Mapped[list] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(16), default='pending', index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime, default=database_utc, index=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
 # Decoys are independent of scans; all their records inherit sensor ownership.
 class DecoySensor(Base):
     __tablename__ = 'decoy_sensors'
