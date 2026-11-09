@@ -226,6 +226,6 @@ Implemented locally:
 - Backend authentication and user-scoped access controls.
 - Domain verification and scan workflow.
 - Honeypot service, detection records, confidence scoring, and audit-related workflows.
-- Docker-based local development and testing.
+- Docker-based development and hosting on Azure.
 
 Deployment, cloud integrations, and production security controls must be verified independently before the system is considered production-ready.
