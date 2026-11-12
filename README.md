@@ -215,6 +215,10 @@ Test authentication, domain ownership, scanning, honeypot detection, and audit b
 
 ## Azure Deployment Status
 
+If the Azure Resource group is still active, you can view it through:
+https://asm-gateway.redbush-3901661c.eastasia.azurecontainerapps.io/
+(Student account billing contraints may lead this to nowhere, if the resource group has been deleted)
+
 The repository includes `HONEYPOTS-AZURE.md` for Azure deployment planning. The local Docker-based feature implementation does **not** by itself establish that Azure hosting, ingress, persistent production storage, secrets, or cloud blocking integration have been configured and verified.
 
 Before production deployment, configure and test isolated decoy hosting, persistent storage, sensor secrets, ingress restrictions, monitoring, and a verified response mechanism. Do not assume that local blocking behavior automatically integrates with Azure networking or a shared gateway.
