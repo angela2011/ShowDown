@@ -225,11 +225,8 @@ Before production deployment, configure and test isolated decoy hosting, persist
 
 ## Project Status
 
-Implemented locally:
 - Frontend authentication screens and protected dashboard routing.
 - Backend authentication and user-scoped access controls.
 - Domain verification and scan workflow.
 - Honeypot service, detection records, confidence scoring, and audit-related workflows.
 - Docker-based development and hosting on Azure.
-
-Deployment, cloud integrations, and production security controls must be verified independently before the system is considered production-ready.
